@@ -63,6 +63,12 @@ export type ClientMessage =
     }
   /** Host only, lobby only. */
   | { type: "settings"; settings: Settings }
+  /**
+   * Host only, lobby only, while alone: seat a practice bot as the second
+   * player so the game can be tried solo. The bot completes missions and
+   * accuses on a timer; see RoomView.practicePeek.
+   */
+  | { type: "addBot" }
   /** Host only, lobby only, needs two players. */
   | { type: "start" }
   /** "הצלחתי!" — I completed my mission (honour system). */
@@ -120,6 +126,8 @@ export interface PlayerView {
   isHost: boolean;
   /** Missions completed this game. */
   completed: number;
+  /** The practice bot. */
+  isBot?: boolean;
 }
 
 export interface MissionView {
@@ -156,6 +164,12 @@ export interface RoomView {
   log: LogEntry[];
   /** Set when phase === "ended". null there means a tie. */
   winnerId: string | null;
+  /**
+   * Practice games only: the bot's current secret mission. With no real
+   * conversation there is nothing to notice, so the player may peek at it to
+   * try both a right and a wrong accusation against the judge.
+   */
+  practicePeek?: string | null;
   /** Server clock at send time, to correct for client clock skew. */
   serverNow: number;
 }
@@ -221,6 +235,9 @@ export type GameEvent =
   | { kind: "gameOver"; winnerId: string | null };
 
 // ---------------------------------------------------------------- shared helpers
+
+/** Player id of the practice bot. */
+export const BOT_ID = "practice-bot";
 
 /** PartyServer party name — the Durable Object binding `MissionRoom` in kebab-case. */
 export const PARTY_NAME = "mission-room";

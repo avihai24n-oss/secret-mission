@@ -1,6 +1,7 @@
 import { Server, routePartykitRequest, type Connection, type WSMessage } from "partyserver";
 import {
   ACCUSE_COOLDOWN_MS,
+  BOT_ID,
   DEFAULT_SETTINGS,
   MAX_GUESS_LENGTH,
   POINTS,
@@ -37,7 +38,13 @@ interface PlayerState {
   cooldownUntil: number;
 }
 
+/** A ruling the bot's own accusation will get once the suspense delay passes. */
+interface BotRuling {
+  correct: boolean;
+}
+
 interface JudgingState {
+  botRuling?: BotRuling;
   /** Guards against a stale ruling landing after the room moved on. */
   token: string;
   accuserId: string;
@@ -57,6 +64,8 @@ interface RoomState {
   log: LogEntry[];
   winnerId: string | null;
   lastActivity: number;
+  /** Epoch ms of the practice bot's next move; 0 = nothing scheduled. */
+  botNextAt?: number;
 }
 
 const STORAGE_KEY = "room";
@@ -119,12 +128,123 @@ export class MissionRoom extends Server<Env> {
   }
 
   async onAlarm(): Promise<void> {
-    if (Date.now() - this.room.lastActivity >= ROOM_TTL_MS) {
+    const now = Date.now();
+    if (now - this.room.lastActivity >= ROOM_TTL_MS) {
       await this.ctx.storage.deleteAll();
       this.room = freshRoom();
-    } else {
-      await this.ctx.storage.setAlarm(this.room.lastActivity + ROOM_TTL_MS);
+      return;
     }
+    if (this.room.botNextAt && now >= this.room.botNextAt) {
+      this.botTurn();
+      await this.commit();
+      return;
+    }
+    await this.scheduleAlarm();
+  }
+
+  /** One alarm serves both the room's expiry and the bot's next move. */
+  private async scheduleAlarm(): Promise<void> {
+    const expiry = this.room.lastActivity + ROOM_TTL_MS;
+    const bot = this.room.botNextAt || Infinity;
+    await this.ctx.storage.setAlarm(Math.min(expiry, bot));
+  }
+
+  // ------------------------------------------------------------ practice bot
+
+  private get bot(): PlayerState | undefined {
+    return this.player(BOT_ID);
+  }
+
+  private planBotMove(minMs: number, maxMs: number): void {
+    this.room.botNextAt = Date.now() + minMs + Math.floor(Math.random() * (maxMs - minMs));
+  }
+
+  private async onAddBot(conn: Connection, me: PlayerState): Promise<void> {
+    if (this.room.phase !== "lobby") return this.sendError(conn, "wrongPhase", "אפשר להוסיף בוט רק בחדר ההמתנה.");
+    if (me.id !== this.room.hostId) return this.sendError(conn, "notHost", "רק מי שפתח את החדר מוסיף בוט.");
+    if (this.room.players.length >= 2) return this.sendError(conn, "badRequest", "החדר כבר מלא.");
+    this.room.players.push({
+      id: BOT_ID,
+      name: "הבוט",
+      avatar: "ninja",
+      gender: me.gender === "m" ? "f" : "m",
+      score: 0,
+      completed: 0,
+      missionId: null,
+      skipsLeft: 0,
+      cooldownUntil: 0,
+    });
+    await this.commit();
+  }
+
+  /** The bot's move: resolve its pending accusation, or complete a mission, or accuse. */
+  private botTurn(): void {
+    const bot = this.bot;
+    const human = this.room.players.find((p) => p.id !== BOT_ID);
+    this.room.botNextAt = 0;
+    if (!bot || !human || this.room.phase !== "playing") return;
+
+    const judging = this.room.judging;
+    if (judging?.botRuling) {
+      const correct = judging.botRuling.correct;
+      this.applyVerdict(correct, correct ? "הניחוש תפס את הכיוון של המשימה." : WRONG_GUESS_REASON);
+      if (this.room.phase === "playing") this.planBotMove(35_000, 70_000);
+      return;
+    }
+    // Wait while the human is away or an accusation of theirs is being judged.
+    if (judging || !this.connectedIds().has(human.id)) {
+      this.planBotMove(8_000, 12_000);
+      return;
+    }
+
+    if (Math.random() < 0.3 && bot.cooldownUntil < Date.now()) {
+      // Accuse the human. The outcome is a coin flip (the bot heard no conversation),
+      // and the guess text is written to match it.
+      const correct = Math.random() < 0.35;
+      const real = this.missionText(human).replace(/\.$/, "");
+      const decoy = ALL_MISSIONS[Math.floor(Math.random() * ALL_MISSIONS.length)];
+      const guess = correct
+        ? `נראה לי שהמשימה שלך היא: ${real}`
+        : `נראה לי שהמשימה שלך היא: ${renderMission(decoy.text, human.gender, bot.gender).replace(/\.$/, "")}`;
+      this.room.judging = {
+        token: crypto.randomUUID(),
+        accuserId: bot.id,
+        targetId: human.id,
+        guess: guess.slice(0, MAX_GUESS_LENGTH),
+        needsManualRuling: false,
+        botRuling: { correct },
+      };
+      this.broadcastEvent({ kind: "judging", accuserId: bot.id, guess: this.room.judging.guess });
+      this.planBotMove(4_000, 5_000);
+      return;
+    }
+
+    const text = this.missionText(bot);
+    const points = this.missionPoints(bot);
+    bot.score += points;
+    bot.completed += 1;
+    this.addLog({ kind: "success", actorId: bot.id, missionText: text, actorDelta: points });
+    this.sendEventTo(human.id, { kind: "opponentSuccess", missionText: text, points });
+    this.dealMission(bot);
+    this.checkTarget();
+    if (this.room.phase === "playing") this.planBotMove(40_000, 80_000);
+  }
+
+  /**
+   * The bot ruling on an accusation against itself when the LLM judge is down:
+   * a plain word-overlap check between the guess and its mission.
+   */
+  private botSelfRuling(guess: string, mission: string): boolean {
+    const words = (s: string) =>
+      s
+        .replace(/[^\u0590-\u05ffa-zA-Z0-9 ]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 3);
+    const missionWords = words(mission);
+    const hits = words(guess).filter((w) =>
+      missionWords.some((m) => m.includes(w.slice(-4)) || w.includes(m.slice(-4)))
+    );
+    return new Set(hits).size >= 2;
   }
 
   // ------------------------------------------------------------ connections
@@ -136,6 +256,7 @@ export class MissionRoom extends Server<Env> {
 
   private connectedIds(except?: Connection): Set<string> {
     const ids = new Set<string>();
+    if (this.room.players.some((p) => p.id === BOT_ID)) ids.add(BOT_ID);
     for (const c of this.getConnections()) {
       if (except && c.id === except.id) continue;
       const id = this.playerIdOf(c);
@@ -175,6 +296,8 @@ export class MissionRoom extends Server<Env> {
     switch (msg.type) {
       case "settings":
         return this.onSettings(conn, me, msg.settings);
+      case "addBot":
+        return this.onAddBot(conn, me);
       case "start":
         return this.onStartGame(conn, me);
       case "success":
@@ -214,7 +337,7 @@ export class MissionRoom extends Server<Env> {
     let me = this.player(playerId);
     if (!me) {
       const live = this.connectedIds(conn);
-      const nobodyHome = this.room.players.every((p) => !live.has(p.id));
+      const nobodyHome = this.room.players.every((p) => p.id === BOT_ID || !live.has(p.id));
       const idleFor = Date.now() - this.room.lastActivity;
       const abandoned =
         nobodyHome &&
@@ -329,6 +452,8 @@ export class MissionRoom extends Server<Env> {
       p.missionId = null;
     }
     for (const p of this.room.players) this.dealMission(p);
+    this.room.botNextAt = 0;
+    if (this.bot) this.planBotMove(25_000, 45_000);
     this.broadcastEvent({ kind: "started" });
     await this.commit();
   }
@@ -339,6 +464,7 @@ export class MissionRoom extends Server<Env> {
     this.room.judging = null;
     this.room.winnerId = null;
     this.room.log = [];
+    this.room.botNextAt = 0;
     for (const p of this.room.players) {
       p.score = 0;
       p.completed = 0;
@@ -352,7 +478,8 @@ export class MissionRoom extends Server<Env> {
   private async onLeave(conn: Connection, me: PlayerState): Promise<void> {
     conn.setState(null);
     if (this.room.phase !== "playing") {
-      this.room.players = this.room.players.filter((p) => p.id !== me.id);
+      // A bot never stays behind alone.
+      this.room.players = this.room.players.filter((p) => p.id !== me.id && p.id !== BOT_ID);
       if (this.room.hostId === me.id) this.room.hostId = this.room.players[0]?.id ?? null;
     } else {
       this.sendEventTo(this.opponentOf(me.id)?.id, {
@@ -467,6 +594,12 @@ export class MissionRoom extends Server<Env> {
 
     // The room may have moved on while the model was thinking.
     if (this.room.judging?.token !== token) return;
+    if (!verdict && target.id === BOT_ID) {
+      const correct = this.botSelfRuling(guess, mission);
+      this.applyVerdict(correct, correct ? "הבוט מודה: תפסת אותו." : WRONG_GUESS_REASON);
+      await this.commit();
+      return;
+    }
     if (!verdict) {
       this.room.judging.needsManualRuling = true;
       await this.commit();
@@ -572,6 +705,7 @@ export class MissionRoom extends Server<Env> {
     const [a, b] = this.room.players;
     this.room.phase = "ended";
     this.room.judging = null;
+    this.room.botNextAt = 0;
     this.room.winnerId = !a ? null : !b ? a.id : a.score === b.score ? null : a.score > b.score ? a.id : b.id;
     this.broadcastEvent({ kind: "gameOver", winnerId: this.room.winnerId });
   }
@@ -599,6 +733,7 @@ export class MissionRoom extends Server<Env> {
         connected: live.has(p.id),
         isHost: p.id === room.hostId,
         completed: p.completed,
+        ...(p.id === BOT_ID ? { isBot: true } : {}),
       })),
       myMission:
         room.phase === "playing" && me?.missionId
@@ -629,6 +764,8 @@ export class MissionRoom extends Server<Env> {
         return entry;
       }),
       winnerId: ended ? room.winnerId : null,
+      practicePeek:
+        room.phase === "playing" && this.bot && playerId !== BOT_ID ? this.missionText(this.bot) : null,
       serverNow: Date.now(),
     };
   }
@@ -671,7 +808,7 @@ export class MissionRoom extends Server<Env> {
   private async commit(): Promise<void> {
     this.room.lastActivity = Date.now();
     await this.ctx.storage.put(STORAGE_KEY, this.room);
-    await this.ctx.storage.setAlarm(this.room.lastActivity + ROOM_TTL_MS);
+    await this.scheduleAlarm();
     this.broadcastState();
   }
 }

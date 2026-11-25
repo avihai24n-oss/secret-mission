@@ -31,6 +31,7 @@ const STEPS = [
 export default function HomeScreen() {
   const profile = useGame((s) => s.profile)!;
   const createRoom = useGame((s) => s.createRoom);
+  const practice = useGame((s) => s.practice);
   const joinRoom = useGame((s) => s.joinRoom);
   const editProfile = useGame((s) => s.editProfile);
   const [joining, setJoining] = useState(false);
@@ -187,6 +188,13 @@ export default function HomeScreen() {
             </motion.form>
           )}
         </AnimatePresence>
+        <button
+          type="button"
+          onClick={practice}
+          className="mx-auto mt-1 min-h-[48px] rounded-2xl px-4 text-[15px] font-bold text-violet-hi underline decoration-violet/40 underline-offset-4"
+        >
+          רק רוצים לנסות? משחק אימון מול בוט
+        </button>
       </motion.section>
 
       <motion.section

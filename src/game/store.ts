@@ -62,6 +62,8 @@ export interface GameStore {
   saveProfile: (p: { name: string; avatar: string; gender: Profile["gender"] }) => void;
   editProfile: (on: boolean) => void;
   createRoom: () => void;
+  /** Opens a room and seats the practice bot in it. */
+  practice: () => void;
   joinRoom: (code: string) => void;
   leave: () => void;
   send: (msg: ClientMessage) => void;
@@ -85,6 +87,9 @@ export const useGame = create<GameStore>((set, get) => {
   const nameOf = (id: string): string =>
     get().room?.players.find((p) => p.id === id)?.name ?? "הצד השני";
 
+  /** Set by practice(): ask for the bot as soon as our fresh lobby answers. */
+  let wantBot = false;
+
   const onState = (room: RoomView) => {
     const prev = get().room;
     const patch: Partial<GameStore> = {
@@ -98,6 +103,11 @@ export const useGame = create<GameStore>((set, get) => {
     if (room.phase === "lobby" && prev && prev.phase !== "lobby") {
       patch.overlay = null;
       patch.missed = null;
+    }
+
+    if (wantBot && room.phase === "lobby") {
+      if (room.players.length === 1) connection?.send({ type: "addBot" });
+      wantBot = false;
     }
 
     const lastId = room.log.length ? room.log[room.log.length - 1].id : null;
@@ -290,6 +300,11 @@ export const useGame = create<GameStore>((set, get) => {
     editProfile: (on) => set({ editingProfile: on }),
 
     createRoom: () => enter(randomRoomCode(), "create"),
+
+    practice: () => {
+      wantBot = true;
+      enter(randomRoomCode(), "create");
+    },
 
     joinRoom: (code) => {
       if (isValidRoomCode(code)) enter(code, "join");

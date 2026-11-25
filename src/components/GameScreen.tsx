@@ -114,7 +114,10 @@ export default function GameScreen() {
 
       <div className="mt-3 flex min-h-0 flex-1 flex-col">
         {room.myMission ? (
-          <MissionCard mission={room.myMission} />
+          <>
+            <MissionCard mission={room.myMission} />
+            {room.practicePeek && <PracticePeek text={room.practicePeek} />}
+          </>
         ) : (
           <div className="card flex flex-1 items-center justify-center p-6 text-center text-mute">
             המשימה הבאה בדרך...
@@ -311,6 +314,30 @@ function SmallAction({
         <span className="ltr flex h-5 min-w-5 items-center justify-center rounded-full bg-white/10 px-1 text-[12px] tabular-nums text-mist">
           {badge}
         </span>
+      )}
+    </button>
+  );
+}
+
+/** Practice games: lets the player read the bot's mission, to try the judge with a right and a wrong guess. */
+function PracticePeek({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => setOpen((v) => !v)}
+      className="mt-2 w-full rounded-2xl border border-dashed border-gold/40 bg-gold/5 px-4 py-2.5 text-start"
+    >
+      <span className="block text-[13px] font-black text-gold">
+        משחק אימון · {open ? "המשימה הסודית של הבוט" : "נגיעה כדי להציץ במשימה של הבוט"}
+      </span>
+      {open && (
+        <>
+          <span className="mt-1 block text-[15px] font-bold leading-snug text-mist">{text}</span>
+          <span className="mt-1 block text-[12px] text-faint">
+            לחצו על הכפתור האדום וכתבו אותה במילים שלכם, או ניחוש שגוי, ותראו מה השופט מחליט.
+          </span>
+        </>
       )}
     </button>
   );

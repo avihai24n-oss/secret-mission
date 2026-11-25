@@ -228,9 +228,18 @@ export default function LobbyScreen() {
               <DuoButton size="lg" full disabled={!canStart} onClick={() => send({ type: "start" })}>
                 התחל מבצע
               </DuoButton>
-              {!canStart && (
+              {!other && (
+                <button
+                  type="button"
+                  onClick={() => send({ type: "addBot" })}
+                  className="mt-1 min-h-[48px] w-full rounded-2xl text-[15px] font-bold text-violet-hi underline decoration-violet/40 underline-offset-4"
+                >
+                  אין עם מי? הוסיפו בוט לאימון
+                </button>
+              )}
+              {!canStart && other && (
                 <p className="mt-2.5 text-center text-[14px] text-faint">
-                  {other ? `מחכים ש${other.name} ${g(other.gender, "יתחבר", "תתחבר")} מחדש` : "מחכים לסוכן השני כדי להתחיל"}
+                  {`מחכים ש${other.name} ${g(other.gender, "יתחבר", "תתחבר")} מחדש`}
                 </p>
               )}
             </>
