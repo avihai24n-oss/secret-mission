@@ -1,6 +1,7 @@
 name = "secret-mission-server"
 main = "src/index.ts"
 compatibility_date = "2026-06-01"
+account_id = "4493248d137def5b905cfcd6d5c0187d"
 
 [ai]
 binding = "AI"
