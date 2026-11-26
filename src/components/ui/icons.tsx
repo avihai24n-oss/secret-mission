@@ -209,6 +209,58 @@ export const IconPhone = (p: IconProps) => (
   </Svg>
 );
 
+export const IconBed = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 19.5V6" />
+    <path d="M3 16.5h18v3" />
+    <path d="M3 12.5h14.5a3.5 3.5 0 0 1 3.5 3.5v.5" />
+    <path d="M6 12.5V11a1.8 1.8 0 0 1 1.8-1.8h2.4A1.8 1.8 0 0 1 12 11v1.5" />
+  </Svg>
+);
+
+/** A steering wheel: "I am driving". */
+export const IconWheel = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="2.2" />
+    <path d="M3.3 10.5c3-1.4 5.5-1.2 6.9.3M20.7 10.5c-3-1.4-5.5-1.2-6.9.3M12 14.2V21" />
+  </Svg>
+);
+
+export const IconBus = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="4.5" y="3.5" width="15" height="14.5" rx="3" />
+    <path d="M4.5 11.5h15" />
+    <path d="M7.5 18v2.5M16.5 18v2.5" />
+    <path d="M8 14.8h.01M16 14.8h.01" strokeWidth={3} />
+  </Svg>
+);
+
+export const IconBriefcase = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="7.5" width="18" height="12.5" rx="3" />
+    <path d="M8.5 7.5V6a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v1.5" />
+    <path d="M3 12.5c5.5 2.3 12.5 2.3 18 0" />
+  </Svg>
+);
+
+/** A shop front: cafe, mall, supermarket. */
+export const IconShop = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4.5 10.5V20h15v-9.5" />
+    <path d="M3 8l1.8-4.5h14.4L21 8a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0z" />
+    <path d="M10 20v-5h4v5" />
+  </Svg>
+);
+
+/** A map pin: "where I am". */
+export const IconPin = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 21.5c-4.5-4.8-6.5-8.2-6.5-11.3a6.5 6.5 0 0 1 13 0c0 3.1-2 6.5-6.5 11.3z" />
+    <circle cx="12" cy="10" r="2.3" />
+  </Svg>
+);
+
 export const IconTarget = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="8.5" />

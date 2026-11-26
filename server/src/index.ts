@@ -7,19 +7,21 @@ import {
   POINTS,
   SKIPS_PER_GAME,
   TARGET_OPTIONS,
+  isPlace,
   type ClientMessage,
   type ErrorCode,
   type GameEvent,
   type Gender,
   type LogEntry,
   type Phase,
+  type Place,
   type RoomView,
   type ServerMessage,
   type Settings,
 } from "../../shared/protocol";
 import { judgeGuess } from "./judge";
 import { renderMission, type Mission } from "./mission-types";
-import { ALL_MISSIONS } from "./mission-bank";
+import { ALL_MISSIONS, dealPool } from "./mission-bank";
 
 type Env = {
   MissionRoom: DurableObjectNamespace;
@@ -36,6 +38,8 @@ interface PlayerState {
   missionId: string | null;
   skipsLeft: number;
   cooldownUntil: number;
+  /** Where the player said they are (phone games). Rooms stored before this field existed lack it. */
+  place?: Place | null;
 }
 
 /** A ruling the bot's own accusation will get once the suspense delay passes. */
@@ -76,6 +80,12 @@ const IDLE_TAKEOVER_MS = 10 * 60 * 1000;
 const WRONG_GUESS_REASON = "לא קרוב מספיק למשימה האמיתית.";
 
 const MISSION_BY_ID = new Map<string, Mission>(ALL_MISSIONS.map((m) => [m.id, m]));
+
+/** Phone games: the share of deals drawn only from missions that depend on a place, when any fit. */
+const PLACE_MISSION_SHARE = 0.5;
+
+/** The practice bot never "drives": it would lock the human into talk-only missions. */
+const BOT_PLACES: Place[] = ["home", "bed", "outside", "transit", "work", "public"];
 
 function freshRoom(): RoomState {
   return {
@@ -120,6 +130,7 @@ export class MissionRoom extends Server<Env> {
     const stored = await this.ctx.storage.get<RoomState>(STORAGE_KEY);
     if (stored && Date.now() - stored.lastActivity < ROOM_TTL_MS) {
       this.room = stored;
+      for (const p of this.room.players) p.place ??= null;
       // A ruling that was in flight when the object was evicted can never land.
       if (this.room.judging && !this.room.judging.needsManualRuling) {
         this.room.judging.needsManualRuling = true;
@@ -173,6 +184,7 @@ export class MissionRoom extends Server<Env> {
       missionId: null,
       skipsLeft: 0,
       cooldownUntil: 0,
+      place: BOT_PLACES[Math.floor(Math.random() * BOT_PLACES.length)],
     });
     await this.commit();
   }
@@ -296,6 +308,8 @@ export class MissionRoom extends Server<Env> {
     switch (msg.type) {
       case "settings":
         return this.onSettings(conn, me, msg.settings);
+      case "place":
+        return this.onPlace(conn, me, msg.place);
       case "addBot":
         return this.onAddBot(conn, me);
       case "start":
@@ -378,6 +392,7 @@ export class MissionRoom extends Server<Env> {
         missionId: null,
         skipsLeft: SKIPS_PER_GAME,
         cooldownUntil: 0,
+        place: null,
       };
       this.room.players.push(me);
       if (!this.room.hostId) this.room.hostId = playerId;
@@ -429,6 +444,16 @@ export class MissionRoom extends Server<Env> {
     const settings = sanitizeSettings(raw);
     if (!settings) return this.sendError(conn, "badRequest", "הגדרות לא תקינות.");
     this.room.settings = settings;
+    await this.commit();
+  }
+
+  /** "איפה אני עכשיו?" / "עברתי מקום". Each player speaks only for themselves. */
+  private async onPlace(conn: Connection, me: PlayerState, raw: unknown): Promise<void> {
+    if (this.room.phase === "ended") return this.sendError(conn, "wrongPhase", "המשחק כבר נגמר.");
+    if (!isPlace(raw)) return this.sendError(conn, "badRequest", "מקום לא מוכר.");
+    me.place = raw;
+    // Moving does not replace a live mission; getting behind the wheel does.
+    this.enforceDrivingSafety();
     await this.commit();
   }
 
@@ -494,9 +519,30 @@ export class MissionRoom extends Server<Env> {
 
   // ------------------------------------------------------------ missions
 
+  /**
+   * Safety net for phone games: a player who is driving must not hold, or be
+   * the subject of, a mission that is not cleared for a driver. Any such live
+   * mission is swapped silently (no skip spent, no log entry). Waits while an
+   * accusation is being judged, so the ruling lands on the mission it was about.
+   */
+  private enforceDrivingSafety(): void {
+    if (this.room.phase !== "playing" || this.room.settings.location !== "phone" || this.room.judging) return;
+    if (!this.room.players.some((p) => p.place === "driving")) return;
+    for (const p of this.room.players) {
+      const mission = p.missionId ? MISSION_BY_ID.get(p.missionId) : undefined;
+      if (!mission) continue;
+      const other = this.opponentOf(p.id);
+      const iDrive = p.place === "driving";
+      const theyDrive = other?.place === "driving";
+      const unsafe =
+        (iDrive && mission.selfPlaces !== undefined && !mission.selfPlaces.includes("driving")) ||
+        (theyDrive && mission.otherPlaces !== undefined && !mission.otherPlaces.includes("driving"));
+      if (unsafe) this.dealMission(p);
+    }
+  }
+
   private dealMission(p: PlayerState): void {
-    const { location, vibe } = this.room.settings;
-    const pool = ALL_MISSIONS.filter((m) => m.locations.includes(location) && m.vibes.includes(vibe));
+    const pool = dealPool(this.room.settings, p.place ?? null, this.opponentOf(p.id)?.place ?? null);
     const taken = new Set(this.room.players.map((x) => x.missionId).filter(Boolean) as string[]);
     let options = pool.filter((m) => !this.room.usedMissionIds.includes(m.id) && !taken.has(m.id));
     if (options.length === 0) {
@@ -504,6 +550,14 @@ export class MissionRoom extends Server<Env> {
       this.room.usedMissionIds = [];
       options = pool.filter((m) => !taken.has(m.id));
     }
+    // The place-free missions outnumber the ones written for a place, so in phone
+    // games about half the deals are drawn only from the missions that use where
+    // the two actually are; otherwise the places would hardly be felt.
+    if (this.room.settings.location === "phone" && Math.random() < PLACE_MISSION_SHARE) {
+      const placed = options.filter((m) => m.selfPlaces || m.otherPlaces);
+      if (placed.length > 0) options = placed;
+    }
+    // Last resort (cannot happen with the current bank): a talk-only mission that fits anywhere.
     const pick = options[Math.floor(Math.random() * options.length)] ?? ALL_MISSIONS[0];
     p.missionId = pick.id;
     this.room.usedMissionIds.push(pick.id);
@@ -691,6 +745,8 @@ export class MissionRoom extends Server<Env> {
       });
     }
     this.checkTarget();
+    // A place change that arrived mid-ruling was held back until now.
+    this.enforceDrivingSafety();
   }
 
   // ------------------------------------------------------------ ending
@@ -734,6 +790,7 @@ export class MissionRoom extends Server<Env> {
         isHost: p.id === room.hostId,
         completed: p.completed,
         ...(p.id === BOT_ID ? { isBot: true } : {}),
+        place: p.place ?? null,
       })),
       myMission:
         room.phase === "playing" && me?.missionId

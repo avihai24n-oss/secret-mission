@@ -10,6 +10,11 @@ export const DEMO_NAMES = [
   "lobby",
   "lobby-guest",
   "lobby-wait",
+  "lobby-phone",
+  "lobby-phone-guest",
+  "game-phone",
+  "game-phone-place",
+  "game-practice",
   "game",
   "game-revealed",
   "game-cooldown",
@@ -116,8 +121,8 @@ function base(over: Partial<RoomView> = {}): RoomView {
     settings: { location: "cafe", vibe: "flirty", target: 400 },
     you: ME,
     players: [
-      { id: ME, name: "דני", avatar: "fedora", gender: "m", score: 150, connected: true, isHost: true, completed: 2 },
-      { id: HER, name: "מאיה", avatar: "beret", gender: "f", score: 250, connected: true, isHost: false, completed: 1 },
+      { id: ME, name: "דני", avatar: "fedora", gender: "m", score: 150, connected: true, isHost: true, completed: 2, place: null },
+      { id: HER, name: "מאיה", avatar: "beret", gender: "f", score: 250, connected: true, isHost: false, completed: 1, place: null },
     ],
     myMission: {
       id: "m7",
@@ -211,6 +216,42 @@ export function demoScenario(name: string): Scenario | null {
         you: HER,
         settings: { location: "phone", vibe: "bold", target: 0 },
       }, { profile: { playerId: HER, name: "מאיה", avatar: "beret", gender: "f" } });
+    }
+
+    // Phone games: each player says where they are.
+    case "lobby-phone": {
+      const l = lobby({ settings: { location: "phone", vibe: "flirty", target: 400 } });
+      return inRoom({ ...l, players: [{ ...l.players[0], place: "home" }, l.players[1]] });
+    }
+    case "lobby-phone-guest": {
+      const l = lobby({ settings: { location: "phone", vibe: "flirty", target: 400 } });
+      return inRoom(
+        { ...l, you: HER, players: [{ ...l.players[0], place: "driving" }, l.players[1]] },
+        { profile: { playerId: HER, name: "מאיה", avatar: "beret", gender: "f" } }
+      );
+    }
+    case "game-phone":
+    case "game-phone-place": {
+      const b = base({
+        settings: { location: "phone", vibe: "flirty", target: 400 },
+        myMission: {
+          id: "p001",
+          text: "תפתח את המקרר, תקריא לה מה יש בפנים, ותגרום לה להרכיב לך מזה סנדוויץ', שכבה אחרי שכבה.",
+          points: 100,
+        },
+      });
+      return inRoom(
+        { ...b, players: [{ ...b.players[0], place: "home" }, { ...b.players[1], place: "transit" }] },
+        { missionRevealed: true }
+      );
+    }
+
+    case "game-practice": {
+      const b = base({ practicePeek: "תגרמי לו לספור בקול עד חמש, לא משנה מה הסיבה." });
+      return inRoom({
+        ...b,
+        players: [b.players[0], { ...b.players[1], id: "practice-bot", name: "הבוט", avatar: "ninja", isBot: true }],
+      });
     }
 
     case "game":

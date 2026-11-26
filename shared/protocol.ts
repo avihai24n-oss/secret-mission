@@ -16,6 +16,29 @@ export type Gender = "m" | "f";
 export type DateLocation = "cafe" | "walk" | "home" | "phone";
 export type Vibe = "light" | "flirty" | "bold";
 
+/**
+ * Phone games only: where one player physically is during the call. Each
+ * player sets their own, and may change it mid-game. Missions are dealt to fit
+ * both places. "driving" is a safety mode: a driver only ever gets, and is only
+ * ever the subject of, purely verbal missions. "transit" and "work" are quiet
+ * modes (nothing loud, nothing embarrassing beyond a whisper).
+ */
+export type Place = "home" | "bed" | "outside" | "driving" | "transit" | "work" | "public";
+
+export const PLACES: readonly Place[] = [
+  "home",
+  "bed",
+  "outside",
+  "driving",
+  "transit",
+  "work",
+  "public",
+] as const;
+
+export function isPlace(value: unknown): value is Place {
+  return typeof value === "string" && (PLACES as readonly string[]).includes(value);
+}
+
 export interface Settings {
   location: DateLocation;
   vibe: Vibe;
@@ -63,6 +86,13 @@ export type ClientMessage =
     }
   /** Host only, lobby only. */
   | { type: "settings"; settings: Settings }
+  /**
+   * Either player, about themselves, in the lobby or while playing ("עברתי
+   * מקום"). Only matters when settings.location is "phone". Mid-game it affects
+   * the next deal; the one exception is switching to "driving", which silently
+   * replaces any live mission that is not safe for a driver (no skip is spent).
+   */
+  | { type: "place"; place: Place }
   /**
    * Host only, lobby only, while alone: seat a practice bot as the second
    * player so the game can be tried solo. The bot completes missions and
@@ -128,6 +158,8 @@ export interface PlayerView {
   completed: number;
   /** The practice bot. */
   isBot?: boolean;
+  /** Where this player said they are (phone games). null = not chosen yet. */
+  place: Place | null;
 }
 
 export interface MissionView {

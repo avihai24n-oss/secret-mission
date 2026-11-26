@@ -4,8 +4,9 @@ import { motion } from "framer-motion";
 import { TARGET_OPTIONS } from "../../shared/protocol";
 import type { DateLocation, PlayerView, Settings, Vibe } from "../../shared/protocol";
 import { me, opponent, useGame } from "../game/store";
-import { LOCATION_LABEL, VIBE_LABEL, g, targetLabel } from "../lib/copy";
+import { LOCATION_LABEL, PLACE_HINT, VIBE_LABEL, g, targetLabel } from "../lib/copy";
 import { inviteLink } from "../lib/profile";
+import PlacePicker, { PlaceTag } from "./PlacePicker";
 import Avatar from "./ui/Avatar";
 import DuoButton from "./ui/DuoButton";
 import type { IconProps } from "./ui/icons";
@@ -55,6 +56,16 @@ export default function LobbyScreen() {
   const host = room.players.find((p) => p.isHost) ?? self;
   const isHost = self.isHost;
   const canStart = isHost && room.players.length === 2 && room.players.every((p) => p.connected);
+
+  // Phone games: each player says where they are, so the missions fit both ends of the call.
+  const byPhone = room.settings.location === "phone";
+  const placeNudge = !byPhone || !other || (self.place && other.place)
+    ? null
+    : !self.place && !other.place
+      ? "עוד לא בחרתם איפה אתם. אפשר להתחיל גם ככה."
+      : !self.place
+        ? `עוד לא בחרת איפה ${g(self.gender, "אתה", "את")} עכשיו. אפשר להתחיל גם ככה.`
+        : `${other.name} עוד לא ${g(other.gender, "בחר", "בחרה")} מקום. אפשר להתחיל גם ככה.`;
 
   const link = inviteLink(room.code);
   const message = `הזמנה למבצע סודי, משחק הריגול לדייט שלנו. קוד החדר: ${room.code}`;
@@ -149,8 +160,8 @@ export default function LobbyScreen() {
 
       {/* Players */}
       <section className="mt-3 grid grid-cols-2 gap-3" aria-label="הסוכנים בחדר">
-        <PlayerCard player={self} you />
-        {other ? <PlayerCard player={other} /> : <WaitingCard />}
+        <PlayerCard player={self} you showPlace={byPhone} />
+        {other ? <PlayerCard player={other} showPlace={byPhone} /> : <WaitingCard />}
       </section>
       {!other && intent === "join" && (
         <p className="mt-2 rounded-2xl bg-gold/10 px-3.5 py-2.5 text-[14px] leading-snug text-gold-hi">
@@ -185,6 +196,15 @@ export default function LobbyScreen() {
             ))}
           </div>
         </Group>
+
+        {byPhone && (
+          <Group label="איפה אני עכשיו?" note="כל אחד בוחר לעצמו">
+            <PlacePicker value={self.place} onPick={(place) => send({ type: "place", place })} />
+            <p className="mt-2 text-[13px] leading-snug text-faint" aria-live="polite">
+              {self.place ? PLACE_HINT[self.place] : "המשימות יותאמו למקום של כל אחד מכם. אפשר לשנות גם באמצע המשחק."}
+            </p>
+          </Group>
+        )}
 
         <Group label="רמת תעוזה">
           <div className="grid grid-cols-3 gap-2.5">
@@ -242,6 +262,9 @@ export default function LobbyScreen() {
                   {`מחכים ש${other.name} ${g(other.gender, "יתחבר", "תתחבר")} מחדש`}
                 </p>
               )}
+              {canStart && placeNudge && (
+                <p className="mt-2.5 text-center text-[13px] leading-snug text-faint">{placeNudge}</p>
+              )}
             </>
           ) : (
             <div className="card flex min-h-[64px] items-center justify-center gap-3 px-4 text-center">
@@ -257,7 +280,15 @@ export default function LobbyScreen() {
   );
 }
 
-function PlayerCard({ player, you = false }: { player: PlayerView; you?: boolean }) {
+function PlayerCard({
+  player,
+  you = false,
+  showPlace = false,
+}: {
+  player: PlayerView;
+  you?: boolean;
+  showPlace?: boolean;
+}) {
   return (
     <motion.div
       layout
@@ -279,6 +310,17 @@ function PlayerCard({ player, you = false }: { player: PlayerView; you?: boolean
         {you ? "זה אני" : player.connected ? g(player.gender, "מוכן למבצע", "מוכנה למבצע") : "התנתקות זמנית"}
         {player.isHost ? " · מארח" : ""}
       </p>
+      {showPlace &&
+        (player.place ? (
+          <PlaceTag
+            place={player.place}
+            className="max-w-full rounded-full bg-violet/15 px-2.5 py-1 text-[12.5px] font-bold text-violet-soft"
+          />
+        ) : (
+          <span className="rounded-full border border-dashed border-white/15 px-2.5 py-1 text-[12.5px] font-bold text-faint">
+            {you ? "איפה אני?" : g(player.gender, "עוד לא בחר מקום", "עוד לא בחרה מקום")}
+          </span>
+        ))}
     </motion.div>
   );
 }
@@ -297,10 +339,13 @@ function WaitingCard() {
   );
 }
 
-function Group({ label, children }: { label: string; children: ReactNode }) {
+function Group({ label, note, children }: { label: string; note?: string; children: ReactNode }) {
   return (
     <fieldset className="mb-4">
-      <legend className="eyebrow mb-2">{label}</legend>
+      <legend className="eyebrow mb-2">
+        {label}
+        {note && <span className="ms-2 font-normal text-faint">{note}</span>}
+      </legend>
       {children}
     </fieldset>
   );

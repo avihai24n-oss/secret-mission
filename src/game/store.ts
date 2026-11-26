@@ -100,6 +100,18 @@ export const useGame = create<GameStore>((set, get) => {
     // A new mission always arrives face down.
     if (room.myMission?.id !== prev?.myMission?.id) patch.missionRevealed = false;
     if (room.judging || room.phase !== "playing") patch.accuseOpen = false;
+    // A mission that changed with nothing new in the log was swapped by the
+    // server because someone started driving and it was not safe for a driver.
+    if (
+      prev?.phase === "playing" &&
+      room.phase === "playing" &&
+      prev.myMission &&
+      room.myMission &&
+      prev.myMission.id !== room.myMission.id &&
+      prev.log[prev.log.length - 1]?.id === room.log[room.log.length - 1]?.id
+    ) {
+      toast("יש נהיגה על הקו, אז קיבלת משימה חדשה שמתאימה לזה");
+    }
     if (room.phase === "lobby" && prev && prev.phase !== "lobby") {
       patch.overlay = null;
       patch.missed = null;
@@ -338,6 +350,14 @@ export const useGame = create<GameStore>((set, get) => {
         // Demo mode has no server; settings are echoed so the lobby is tappable.
         const room = get().room;
         if (msg.type === "settings" && room) set({ room: { ...room, settings: msg.settings } });
+        if (msg.type === "place" && room) {
+          set({
+            room: {
+              ...room,
+              players: room.players.map((p) => (p.id === room.you ? { ...p, place: msg.place } : p)),
+            },
+          });
+        }
         return;
       }
       const ok = connection?.send(msg) ?? false;

@@ -4,11 +4,12 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ACCUSE_COOLDOWN_MS } from "../../shared/protocol";
 import type { PlayerView, RoomView } from "../../shared/protocol";
 import { me, opponent, useGame } from "../game/store";
-import { g } from "../lib/copy";
+import { PLACE_HINT, g } from "../lib/copy";
 import AccuseSheet from "./AccuseSheet";
 import JudgingOverlay from "./JudgingOverlay";
 import LogList, { logHeadline } from "./LogList";
 import MissionCard from "./MissionCard";
+import PlacePicker, { PlaceTag } from "./PlacePicker";
 import { SuccessBurst } from "./Overlays";
 import Avatar from "./ui/Avatar";
 import CountdownRing from "./ui/CountdownRing";
@@ -16,7 +17,17 @@ import { duoVariant } from "./ui/DuoButton";
 import HoldButton from "./ui/HoldButton";
 import ProgressBar from "./ui/ProgressBar";
 import Sheet, { ConfirmSheet } from "./ui/Sheet";
-import { IconCheck, IconFlag, IconInfinity, IconScroll, IconSiren, IconSwap, IconX } from "./ui/icons";
+import {
+  IconCheck,
+  IconChevronDown,
+  IconFlag,
+  IconInfinity,
+  IconPin,
+  IconScroll,
+  IconSiren,
+  IconSwap,
+  IconX,
+} from "./ui/icons";
 
 /** Ticks while `active`, for the cooldown countdown. */
 function useNow(active: boolean): number {
@@ -38,7 +49,7 @@ export default function GameScreen() {
   const setAccuseOpen = useGame((s) => s.setAccuseOpen);
   const missed = useGame((s) => s.missed);
   const dismissMissed = useGame((s) => s.dismissMissed);
-  const [sheet, setSheet] = useState<"skip" | "end" | "log" | null>(null);
+  const [sheet, setSheet] = useState<"skip" | "end" | "log" | "place" | null>(null);
 
   const self = me(room);
   const other = opponent(room);
@@ -52,6 +63,33 @@ export default function GameScreen() {
   return (
     <main className="shell" style={{ height: "100dvh" }}>
       <Scoreboard room={room} self={self} other={other} />
+
+      {room.settings.location === "phone" && (
+        <div className="mt-2 flex items-center justify-between gap-2 text-[13px] font-bold">
+          <button
+            type="button"
+            onClick={() => setSheet("place")}
+            aria-label={self.place ? "עברתי מקום. שינוי המקום שלי" : "בחירת המקום שלי"}
+            className="flex min-h-[40px] min-w-0 items-center gap-1.5 rounded-full border border-white/10 bg-ink-800/80 px-3 text-mute active:bg-white/10"
+          >
+            {self.place ? (
+              <PlaceTag place={self.place} className="text-violet-soft" />
+            ) : (
+              <>
+                <IconPin size={15} className="text-gold" />
+                <span>איפה אני?</span>
+              </>
+            )}
+            <IconChevronDown size={14} className="text-faint" />
+          </button>
+          {other?.place && (
+            <span className="flex min-w-0 items-center gap-1.5 pe-1 text-faint">
+              <span className="truncate">{other.name}</span>
+              <PlaceTag place={other.place} />
+            </span>
+          )}
+        </div>
+      )}
 
       <AnimatePresence>
         {other && !other.connected && (
@@ -116,7 +154,15 @@ export default function GameScreen() {
         {room.myMission ? (
           <>
             <MissionCard mission={room.myMission} />
-            {room.practicePeek && <PracticePeek text={room.practicePeek} />}
+            {room.practicePeek && (
+              <>
+                <p className="mt-2 px-1 text-[13px] leading-snug text-faint">
+                  במשחק אמיתי מבצעים את המשימה בשיחה עם הצד השני. מול הבוט אין מה לבצע, אז החזקה על "הצלחתי!" רק מראה מה
+                  קורה כשמצליחים.
+                </p>
+                <PracticePeek text={room.practicePeek} />
+              </>
+            )}
           </>
         ) : (
           <div className="card flex flex-1 items-center justify-center p-6 text-center text-mute">
@@ -202,6 +248,21 @@ export default function GameScreen() {
         <div className="scroll-y -mx-1 min-h-0 flex-1 px-1 pb-2">
           <LogList log={room.log} players={room.players} you={room.you} />
         </div>
+      </Sheet>
+
+      <Sheet open={sheet === "place"} onClose={() => setSheet(null)} title="עברתי מקום">
+        <p className="mb-3 text-[15px] leading-snug text-mute">
+          איפה {g(self.gender, "אתה", "את")} עכשיו? המשימה הנוכחית נשארת, והבאות יתאימו למקום החדש.
+        </p>
+        <PlacePicker
+          layout="list"
+          value={self.place}
+          onPick={(place) => {
+            if (place !== self.place) send({ type: "place", place });
+            setSheet(null);
+          }}
+        />
+        <p className="mb-1 mt-3 text-[13px] leading-snug text-faint">בנהיגה: {PLACE_HINT.driving}</p>
       </Sheet>
 
       <AnimatePresence>
